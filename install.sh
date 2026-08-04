@@ -24,16 +24,47 @@ ask() {
     fi
 }
 
+need_cmd() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# ---------- prerequisites (only if missing) ----------
+echo "Checking prerequisites..."
+
+MISSING=()
+need_cmd python3 || MISSING+=("python3")
+need_cmd jq     || MISSING+=("jq")
+
+if [ ${#MISSING[@]} -gt 0 ]; then
+    echo "Installing missing packages: ${MISSING[*]}"
+    if need_cmd apt-get; then
+        apt-get update -qq
+        apt-get install -y -qq "${MISSING[@]}"
+    elif need_cmd yum; then
+        yum install -y "${MISSING[@]}"
+    else
+        echo "❌ Cannot install packages automatically. Please install: ${MISSING[*]}"
+        exit 1
+    fi
+else
+    echo "✔ python3 and jq already installed – skipping"
+fi
+echo ""
+
 # ---------- stop old service ----------
 systemctl stop node-watcher 2>/dev/null || true
 
-# ---------- create dir ----------
+# ---------- create dir & copy files ----------
 mkdir -p "$INSTALL_DIR"
 cp "$SCRIPT_DIR/node_watcher.py" "$INSTALL_DIR/"
+cp "$SCRIPT_DIR/checker.sh" "$INSTALL_DIR/" 2>/dev/null || true
 chmod +x "$INSTALL_DIR/node_watcher.py"
+[ -f "$INSTALL_DIR/checker.sh" ] && chmod +x "$INSTALL_DIR/checker.sh"
+
+# symlink for easy access
+ln -sf "$INSTALL_DIR/checker.sh" /usr/local/bin/checker 2>/dev/null || true
 
 # ---------- interactive config ----------
-echo ""
 echo "چند تا inbound می‌خوای watch بشه؟"
 NUM=$(ask "تعداد inbound" "1")
 
@@ -44,7 +75,6 @@ fi
 
 echo ""
 echo "حالا برای هر inbound اطلاعات لازم رو وارد کن."
-echo "(می‌تونی از پنل → Inbounds → Export یا از دیتابیس JSON بگیری)"
 echo ""
 
 WATCHED_JSON="[]"
@@ -62,7 +92,7 @@ for ((i=1; i<=NUM; i++)); do
     echo "  ایمیل کلاینت‌هایی که متعلق به این inbound هستن رو وارد کن"
     echo "  (با کاما جدا کن، مثال: USAob8443,Nob8443)"
     EMAILS_RAW=$(ask "  Client emails" "")
-    # convert to json array
+
     EMAILS_JSON="[]"
     if [ -n "$EMAILS_RAW" ]; then
         EMAILS_JSON=$(echo "$EMAILS_RAW" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | jq -R . | jq -s .)
@@ -82,7 +112,6 @@ for ((i=1; i<=NUM; i++)); do
         read -r SNIFF
     fi
 
-    # build one inbound object
     ITEM=$(jq -n \
         --argjson id "$ID" \
         --argjson port "$PORT" \
@@ -160,13 +189,12 @@ echo "=============================================="
 echo "  نصب تموم شد!"
 echo "=============================================="
 echo ""
+echo "منوی مدیریت:"
+echo "  checker"
+echo ""
 echo "وضعیت سرویس:"
 systemctl status node-watcher --no-pager -l || true
 echo ""
 echo "لاگ زنده:"
 echo "  journalctl -u node-watcher -f"
-echo ""
-echo "ویرایش کانفیگ:"
-echo "  nano $INSTALL_DIR/config.json"
-echo "  systemctl restart node-watcher"
 echo ""

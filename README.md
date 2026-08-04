@@ -1,8 +1,16 @@
-# Node Watcher for 3x-ui
+# Node Watcher for Sanayi / 3X-UI
 
-An automated background watcher for 3x-ui nodes that directly manages and keeps alive specified inbounds (e.g., port 8443) via SQLite database interaction.
+اسکریپت نظارت و بازیابی خودکار اینباندهای مشخص‌شده در پنل سنایی / 3X-UI.
 
-## One-Line Installation
+## ویژگی‌ها
+
+- فقط اینباندهایی که موقع نصب مشخص می‌کنی رو watch می‌کنه
+- اگر اینباند پاک بشه، با تنظیمات ذخیره‌شده + UUID واقعی کلاینت‌ها دوباره می‌سازه
+- جدول `client_inbounds` رو هم درست می‌کنه (Attached inbounds دیگه `---` نمی‌مونه)
+- UUID رندوم نمی‌سازه؛ از جدول `clients` می‌خونه
+
+## پیش‌نیاز
 
 ```bash
-bash -c "$(curl -fsSL [https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/install.sh](https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/install.sh))"
+apt update
+apt install -y python3 jq

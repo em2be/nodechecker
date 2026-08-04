@@ -1,6 +1,7 @@
 [Unit]
-Description=Node Inbound Watcher Service (Direct DB)
+Description=Node Watcher - Auto heal & sync for 3X-UI / Sanayi panel
 After=network.target x-ui.service
+Wants=x-ui.service
 
 [Service]
 Type=simple
@@ -8,9 +9,12 @@ User=root
 WorkingDirectory=/opt/node-watcher
 ExecStart=/usr/bin/python3 /opt/node-watcher/node_watcher.py
 Restart=always
-RestartSec=5
+RestartSec=8
 StandardOutput=journal
 StandardError=journal
+
+# Safety
+LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target

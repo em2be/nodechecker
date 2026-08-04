@@ -1,13 +1,17 @@
 import json
 import os
+import sys
 import time
 import requests
 
 CONFIG_FILE = "inbound_config.json"
 
+
 def load_config():
     if not os.path.exists(CONFIG_FILE):
-        print(f"❌ Configuration file '{CONFIG_FILE}' not found in {os.getcwd()}")
+        print(
+            f"❌ Configuration file '{CONFIG_FILE}' not found in {os.getcwd()}"
+        )
         return None
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -16,11 +20,12 @@ def load_config():
         print(f"❌ Error reading {CONFIG_FILE}: {e}")
         return None
 
+
 def get_session(panel_url, username, password, base_path=""):
     session = requests.Session()
     login_url = f"{panel_url.rstrip('/')}{base_path}/login"
     payload = {"username": username, "password": password}
-    
+
     try:
         res = session.post(login_url, data=payload, timeout=10)
         data = res.json()
@@ -33,14 +38,15 @@ def get_session(panel_url, username, password, base_path=""):
         print(f"❌ Connection error during login: {e}")
         return None
 
+
 def check_and_restore():
     config = load_config()
     if not config:
-        return 60  # زمان پیش‌فرض در صورت عدم دریافت کانفیگ
+        return 30
 
-    panel_url = config.get("panel_url")
-    username = config.get("username")
-    password = config.get("password")
+    panel_url = config.get("panel_url", "")
+    username = config.get("username", "")
+    password = config.get("password", "")
     base_path = config.get("base_path", "")
     target_inbound = config.get("inbound", {})
     check_interval = int(config.get("check_interval", 60))
@@ -63,30 +69,53 @@ def check_and_restore():
             return check_interval
 
         inbounds = data.get("obj", [])
-        
+        if inbounds is None:
+            inbounds = []
+
         # بررسی وجود اینباند بر اساس پورت
         exists = any(item.get("port") == target_port for item in inbounds)
 
         if exists:
             print(f"✔ Inbound on port {target_port} is active.")
         else:
-            print(f"⚠️ Inbound on port {target_port} is missing! Restoring...")
-            add_url = f"{panel_url.rstrip('/')}{base_path}/panel/api/inbounds/add"
-            
-            # تبدیل اجزای داخلی به string برای سازگاری با API 3x-ui
-            payload = dict(target_inbound)
-            if isinstance(payload.get("settings"), dict):
-                payload["settings"] = json.dumps(payload["settings"])
-            if isinstance(payload.get("streamSettings"), dict):
-                payload["streamSettings"] = json.dumps(payload["streamSettings"])
-            if isinstance(payload.get("sniffing"), dict):
-                payload["sniffing"] = json.dumps(payload["sniffing"])
+            print(
+                f"⚠️ Inbound on port {target_port} is missing! Restoring..."
+            )
+            add_url = (
+                f"{panel_url.rstrip('/')}{base_path}/panel/api/inbounds/add"
+            )
+
+            # ساخت Payload استاندارد برای API پنل 3x-ui
+            payload = {
+                "up": target_inbound.get("up", 0),
+                "down": target_inbound.get("down", 0),
+                "total": target_inbound.get("total", 0),
+                "remark": target_inbound.get("remark", ""),
+                "enable": target_inbound.get("enable", True),
+                "expiryTime": target_inbound.get("expiryTime", 0),
+                "listen": target_inbound.get("listen", ""),
+                "port": target_port,
+                "protocol": target_inbound.get("protocol", "vless"),
+                "settings": json.dumps(target_inbound.get("settings", {}))
+                if isinstance(target_inbound.get("settings"), dict)
+                else target_inbound.get("settings"),
+                "streamSettings": json.dumps(
+                    target_inbound.get("streamSettings", {})
+                )
+                if isinstance(target_inbound.get("streamSettings"), dict)
+                else target_inbound.get("streamSettings"),
+                "sniffing": json.dumps(target_inbound.get("sniffing", {}))
+                if isinstance(target_inbound.get("sniffing"), dict)
+                else target_inbound.get("sniffing"),
+            }
 
             add_res = session.post(add_url, data=payload, timeout=10)
             add_data = add_res.json()
 
             if add_data.get("success"):
-                print(f"✅ Inbound on port {target_port} successfully restored!")
+                print(
+                    f"✅ Inbound on port {target_port} successfully restored!"
+                )
             else:
                 print(f"❌ Failed to restore inbound: {add_data.get('msg')}")
 
@@ -95,8 +124,16 @@ def check_and_restore():
 
     return check_interval
 
+
 if __name__ == "__main__":
-    print("🚀 Node Watcher Started...")
+    print("🚀 Node Watcher Started Successfully!")
+    sys.stdout.flush()
     while True:
-        interval = check_and_restore()
-        time.sleep(interval)
+        try:
+            interval = check_and_restore()
+            sys.stdout.flush()
+            time.sleep(interval)
+        except Exception as main_e:
+            print(f"❌ Unexpected error in loop: {main_e}")
+            sys.stdout.flush()
+            time.sleep(10)

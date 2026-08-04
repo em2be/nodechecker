@@ -1,0 +1,16 @@
+[Unit]
+Description=Node Inbound Watcher Service (Direct DB)
+After=network.target x-ui.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/node-watcher
+ExecStart=/usr/bin/python3 /opt/node-watcher/node_watcher.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

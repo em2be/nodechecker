@@ -2,192 +2,89 @@ import json
 import os
 import sys
 import time
-import requests
-import urllib3
+import sqlite3
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+def get_db_path():
+    paths = ['/etc/x-ui/x-ui.db', '/usr/local/x-ui/db/x-ui.db']
+    for p in paths:
+        if os.path.exists(p):
+            return p
+    return paths[0]
 
-CONFIG_FILE = "inbound_config.json"
+DB_PATH = get_db_path()
+CONFIG_FILE = "/opt/node-watcher/inbound_config.json"
 
-
-def load_config():
-    if not os.path.exists(CONFIG_FILE):
-        print(
-            f"❌ Configuration file '{CONFIG_FILE}' not found in {os.getcwd()}"
-        )
-        return None
-    try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        print(f"❌ Error reading {CONFIG_FILE}: {e}")
-        return None
-
-
-def get_session(panel_url, username, password, base_path=""):
-    session = requests.Session()
-    session.verify = False
-
-    url_base = panel_url.rstrip("/")
-    if base_path and not base_path.startswith("/"):
-        base_path = "/" + base_path
-    base_path = base_path.rstrip("/")
-
-    full_base = f"{url_base}{base_path}"
-    login_url = f"{full_base}/login"
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Origin": full_base,
-        "Referer": f"{login_url}",
-    }
-
-    payload = {"username": username, "password": password}
-
-    try:
-        # تست روش ۱: Form Data (استاندارد اصلی 3x-ui)
-        res = session.post(
-            login_url, data=payload, headers=headers, timeout=10
-        )
-
-        # اگر با Form Data خطای 403 داد، روش JSON امتحان می‌شود
-        if res.status_code == 403:
-            res = session.post(
-                login_url, json=payload, headers=headers, timeout=10
-            )
-
-        if res.status_code != 200:
-            print(
-                f"❌ Login failed with HTTP Status Code: {res.status_code} on {login_url}"
-            )
-            return None
-
-        try:
-            data = res.json()
-            if data.get("success"):
-                return session
-            else:
-                print(f"❌ Login failed: {data.get('msg')}")
-                return None
-        except Exception:
-            # اگر خروجی JSON نبود ولی کوکی ست شد
-            if "session" in session.cookies or "x-ui" in session.cookies:
-                return session
-            print("❌ Invalid response format from panel during login.")
-            return None
-
-    except Exception as e:
-        print(f"❌ Connection error during login: {e}")
-        return None
-
-
-def check_and_restore():
-    config = load_config()
-    if not config:
+def check_and_restore_db():
+    if not os.path.exists(DB_PATH) or not os.path.exists(CONFIG_FILE):
         return 5
 
-    panel_url = config.get("panel_url", "")
-    username = config.get("username", "")
-    password = config.get("password", "")
-    base_path = config.get("base_path", "")
-    target_inbound = config.get("inbound", {})
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            config = json.load(f)
+    except Exception as e:
+        print(f"❌ Error reading config: {e}")
+        return 5
 
+    target = config.get("inbound", {})
     check_interval = int(config.get("check_interval", 5))
-
-    target_port = target_inbound.get("port")
-    if not target_port:
-        print("❌ 'port' is missing in target inbound JSON.")
-        return check_interval
-
-    session = get_session(panel_url, username, password, base_path)
-    if not session:
-        return check_interval
-
-    url_base = panel_url.rstrip("/")
-    if base_path and not base_path.startswith("/"):
-        base_path = "/" + base_path
-    base_path = base_path.rstrip("/")
-
-    full_base = f"{url_base}{base_path}"
-    list_url = f"{full_base}/panel/api/inbounds/list"
+    target_port = target.get("port", 8443)
 
     try:
-        res = session.get(list_url, timeout=10)
-        if res.status_code != 200:
-            print(f"❌ Fetch list failed with status: {res.status_code}")
-            return check_interval
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        row = c.execute("SELECT id, enable FROM inbounds WHERE port = ?", (target_port,)).fetchone()
 
-        data = res.json()
-        if not data.get("success"):
-            print(f"❌ Failed to fetch inbounds list: {data.get('msg')}")
-            return check_interval
+        if not row:
+            print(f"⚠️ Inbound on port {target_port} missing from DB. Restoring...")
+            conn.close()
+            os.system("systemctl stop x-ui")
+            time.sleep(1)
 
-        inbounds = data.get("obj", [])
-        if inbounds is None:
-            inbounds = []
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
 
-        exists = any(item.get("port") == target_port for item in inbounds)
+            s_str = json.dumps(target.get("settings", {}))
+            st_str = json.dumps(target.get("streamSettings", {}))
+            sn_str = json.dumps(target.get("sniffing", {}))
 
-        if exists:
-            print(f"✔ Inbound on port {target_port} is active.")
-        else:
-            print(
-                f"⚠️ Inbound on port {target_port} is missing! Restoring..."
-            )
-            add_url = f"{full_base}/panel/api/inbounds/add"
+            c.execute("PRAGMA table_info(inbounds)")
+            cols = [col[1] for col in c.fetchall()]
 
-            payload = {
-                "up": target_inbound.get("up", 0),
-                "down": target_inbound.get("down", 0),
-                "total": target_inbound.get("total", 0),
-                "remark": target_inbound.get("remark", ""),
-                "enable": target_inbound.get("enable", True),
-                "expiryTime": target_inbound.get("expiryTime", 0),
-                "listen": target_inbound.get("listen", ""),
-                "port": target_port,
-                "protocol": target_inbound.get("protocol", "vless"),
-                "settings": json.dumps(target_inbound.get("settings", {}))
-                if isinstance(target_inbound.get("settings"), dict)
-                else target_inbound.get("settings"),
-                "streamSettings": json.dumps(
-                    target_inbound.get("streamSettings", {})
-                )
-                if isinstance(target_inbound.get("streamSettings"), dict)
-                else target_inbound.get("streamSettings"),
-                "sniffing": json.dumps(target_inbound.get("sniffing", {}))
-                if isinstance(target_inbound.get("sniffing"), dict)
-                else target_inbound.get("sniffing"),
-            }
-
-            headers = {"Accept": "application/json"}
-            add_res = session.post(
-                add_url, data=payload, headers=headers, timeout=10
-            )
-            add_data = add_res.json()
-
-            if add_data.get("success"):
-                print(
-                    f"✅ Inbound on port {target_port} successfully restored!"
-                )
+            if "tag" in cols:
+                c.execute("""INSERT INTO inbounds (user_id, up, down, total, remark, enable, expiry_time, listen, port, protocol, settings, stream_settings, tag, sniffing)
+                             VALUES (1, 0, 0, 0, ?, 1, 0, '', ?, ?, ?, ?, ?, ?)""",
+                          (target.get("remark", "Node-Outbound"), target_port, target.get("protocol", "vless"), s_str, st_str, f"inbound-{target_port}", sn_str))
             else:
-                print(f"❌ Failed to restore inbound: {add_data.get('msg')}")
+                c.execute("""INSERT INTO inbounds (user_id, up, down, total, remark, enable, expiry_time, listen, port, protocol, settings, stream_settings, sniffing)
+                             VALUES (1, 0, 0, 0, ?, 1, 0, '', ?, ?, ?, ?, ?)""",
+                          (target.get("remark", "Node-Outbound"), target_port, target.get("protocol", "vless"), s_str, st_str, sn_str))
+
+            conn.commit()
+            conn.close()
+            os.system("systemctl start x-ui")
+            print(f"✅ Inbound on port {target_port} successfully restored into DB!")
+
+        elif row[1] == 0:
+            c.execute("UPDATE inbounds SET enable = 1, expiry_time = 0 WHERE port = ?", (target_port,))
+            conn.commit()
+            conn.close()
+            print(f"✔ Re-enabled inbound on port {target_port}.")
+            os.system("systemctl restart x-ui")
+        else:
+            conn.close()
 
     except Exception as e:
-        print(f"❌ Error during execution: {e}")
+        print(f"❌ Monitor DB Error: {e}")
 
     return check_interval
 
-
 if __name__ == "__main__":
-    print("🚀 Node Watcher Started Successfully!")
+    print("🚀 Direct DB Node Watcher Running...")
     sys.stdout.flush()
     while True:
         try:
-            interval = check_and_restore()
+            interval = check_and_restore_db()
             sys.stdout.flush()
             time.sleep(interval)
-        except Exception as main_e:
-            print(f"❌ Unexpected error in loop: {main_e}")
-            sys.stdout.flush()
+        except Exception:
             time.sleep(5)

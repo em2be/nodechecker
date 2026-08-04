@@ -1,14 +1,8 @@
-# 🛡️ Node Inbound Watcher (3x-ui / Sanaei)
+# Node Watcher for 3x-ui
 
-An automated background watcher service designed for **3x-ui (Sanaei)** node servers. 
+An automated background watcher for 3x-ui nodes that directly manages and keeps alive specified inbounds (e.g., port 8443) via SQLite database interaction.
 
-If a Master server overwrites or deletes local tunnel inbounds during sync cycles, this service automatically detects the missing inbound and client, re-creates them via local API, and re-attaches target users within 60 seconds.
-
----
-
-## ⚡ One-Line Installation
-
-Run the following command on your **Node Server** via SSH:
+## One-Line Installation
 
 ```bash
-git clone [https://github.com/em2be/nodechecker.git](https://github.com/em2be/nodechecker.git) node-watcher && cd node-watcher && chmod +x install.sh && ./install.sh
+bash -c "$(curl -fsSL [https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/install.sh](https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/install.sh))"

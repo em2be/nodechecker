@@ -1,10 +1,10 @@
+cat << 'EOF' > install.sh
 #!/bin/bash
 set -e
 
 echo "🔒 Node Inbound Watcher Setup"
 echo "=============================="
 
-# دریافت اطلاعات لاگین پنل
 read -p "Enter Panel Port (default: 2053): " PANEL_PORT
 PANEL_PORT=${PANEL_PORT:-2053}
 
@@ -19,23 +19,20 @@ echo "----------------------------------------------------"
 echo "Paste your Inbound JSON below and press Ctrl+D when finished:"
 echo "----------------------------------------------------"
 
-# دریافت JSON چندخطی از ترمینال
 INBOUND_JSON=$(cat)
 
-# اعتبارسنجی اولیه برای خالی نبودن ورودی
 if [ -z "$INBOUND_JSON" ]; then
   echo "❌ Error: Inbound JSON cannot be empty!"
   exit 1
 fi
 
-# ساخت فایل کانفیگ نهایی روی سرور
 echo "📝 Generating inbound_config.json..."
 python3 -c "
 import json, sys
 
 panel_url = 'http://127.0.0.1:${PANEL_PORT}'
-username = '${PANEL_USER}'
-password = '${PANEL_PASS}'
+username = '''${PANEL_USER}'''
+password = '''${PANEL_PASS}'''
 
 raw_inbound = '''$INBOUND_JSON'''
 
@@ -59,13 +56,11 @@ with open('$CONFIG_PATH', 'w', encoding='utf-8') as f:
 print('✅ Configuration created successfully.')
 "
 
-# نصب پیش‌نیازها و تعریف سرویس
-echo "📦 Setting up environment and systemd service..."
-apt-get update -y > /dev/null
-apt-get install -y python3 python3-pip > /dev/null
-pip3 install requests --break-system-packages > /dev/null 2>&1 || pip3 install requests > /dev/null 2>&1
+echo "📦 Installing python3-requests..."
+DEBIAN_FRONTEND=noninteractive apt-get update -y
+DEBIAN_FRONTEND=noninteractive apt-get install -y python3-requests python3-pip
 
-cat <<EOF > /etc/systemd/system/node-watcher.service
+cat <<SERVICE_EOF > /etc/systemd/system/node-watcher.service
 [Unit]
 Description=Node Inbound Auto Healing Service
 After=network.target
@@ -80,7 +75,7 @@ RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
-EOF
+SERVICE_EOF
 
 systemctl daemon-reload
 systemctl enable node-watcher
@@ -88,3 +83,4 @@ systemctl restart node-watcher
 
 echo ""
 echo "✅ Setup finished and node-watcher service is active!"
+EOF

@@ -246,7 +246,6 @@ def auto_heal_and_sync():
             exists = cur.fetchone() is not None
 
             if not exists:
-                # orphan → restore
                 if not modified:
                     stop_xui()
                     conn.close()
@@ -256,7 +255,6 @@ def auto_heal_and_sync():
                 restore_inbound(cur, item)
                 conn.commit()
             else:
-                # exists → just make sure links + settings are healthy
                 if fix_links_and_settings(cur, item):
                     if not modified:
                         stop_xui()
@@ -264,7 +262,6 @@ def auto_heal_and_sync():
                         conn = get_conn()
                         cur = conn.cursor()
                         modified = True
-                        # re-run fix after re-open
                         fix_links_and_settings(cur, item)
                     conn.commit()
 
@@ -288,5 +285,5 @@ if __name__ == "__main__":
         try:
             auto_heal_and_sync()
         except Exception as e:
-            log.error(f"Unexpected: {e}", exp_info=True)
+            log.error(f"Unexpected: {e}", exc_info=True)
         time.sleep(CHECK_INTERVAL)

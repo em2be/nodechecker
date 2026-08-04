@@ -1,0 +1,28 @@
+{
+  "db_path": "/etc/x-ui/x-ui.db",
+  "check_interval": 15,
+  "log_file": "/var/log/node_watcher.log",
+  "watched_inbounds": [
+    {
+      "id": 14,
+      "port": 8443,
+      "remark": "My Important Inbound",
+      "protocol": "vless",
+      "listen": "",
+      "stream_settings": {
+        "network": "tcp",
+        "security": "none",
+        "tcpSettings": {
+          "header": {"type": "none"},
+          "acceptProxyProtocol": false
+        }
+      },
+      "sniffing": {
+        "enabled": false,
+        "destOverride": ["http", "tls", "quic"]
+      },
+      "tag": "in-14-watched",
+      "client_emails": ["USAob8443", "Nob8443"]
+    }
+  ]
+}

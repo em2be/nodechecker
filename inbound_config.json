@@ -1,0 +1,38 @@
+{
+  "panel_url": "http://127.0.0.1:2053",
+  "username": "",
+  "password": "",
+  "base_path": "",
+  "inbound": {
+    "remark": "Node-Tunnel",
+    "port": 8443,
+    "protocol": "vless",
+    "enable": true,
+    "settings": {
+      "clients": [
+        {
+          "id": "",
+          "email": "tunnel-user@node",
+          "enable": true,
+          "expiryTime": 0,
+          "totalGB": 0,
+          "flow": ""
+        }
+      ],
+      "decryption": "none",
+      "fallbacks": []
+    },
+    "streamSettings": {
+      "network": "ws",
+      "security": "none",
+      "wsSettings": {
+        "path": "/tunnel-path",
+        "headers": {}
+      }
+    },
+    "sniffing": {
+      "enabled": true,
+      "destOverride": ["http", "tls"]
+    }
+  }
+}

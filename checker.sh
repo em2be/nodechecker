@@ -1,30 +1,30 @@
 #!/bin/bash
-
 INSTALL_DIR="/opt/node-watcher"
-CONFIG_FILE="${INSTALL_DIR}/inbound_config.json"
+CONFIG_FILE="${INSTALL_DIR}/config.json"
+REPO_URL="https://github.com/em2be/nodechecker.git"
 
 show_menu() {
     clear
     echo "=========================================="
-    echo "       Node Watcher Management Menu       "
+    echo " Node Watcher Management Menu "
     echo "=========================================="
     echo " 1) Uninstall Service"
     echo " 2) Update Script from GitHub"
     echo " 3) Reinstall (Fresh Setup)"
-    echo " 4) Edit Inbound JSON"
+    echo " 4) Edit Config (config.json)"
     echo " 5) View Logs"
     echo " 6) Start Service"
     echo " 7) Stop Service"
     echo " 8) Change Timer (Interval in Seconds)"
+    echo " 9) Status"
     echo " 0) Exit"
     echo "=========================================="
-    read -p "Select an option [0-8]: " choice
-
+    read -p "Select an option [0-9]: " choice
     case $choice in
         1)
             echo "🛑 Uninstalling Node Watcher..."
-            systemctl stop node-watcher || true
-            systemctl disable node-watcher || true
+            systemctl stop node-watcher 2>/dev/null || true
+            systemctl disable node-watcher 2>/dev/null || true
             rm -f /etc/systemd/system/node-watcher.service
             systemctl daemon-reload
             rm -rf "$INSTALL_DIR"
@@ -39,19 +39,57 @@ show_menu() {
                 systemctl restart node-watcher
                 echo "✅ Updated successfully!"
             else
-                echo "❌ Git directory not found in $INSTALL_DIR. Reinstalling is recommended."
+                echo "❌ Git directory not found in $INSTALL_DIR."
+                echo "   Use option 3 (Reinstall) instead."
             fi
             read -p "Press Enter to return..."
             show_menu
             ;;
         3)
             echo "🔄 Reinstalling Node Watcher..."
-            systemctl stop node-watcher || true
+            systemctl stop node-watcher 2>/dev/null || true
+            TMPDIR=$(mktemp -d)
+            git clone "$REPO_URL" "$TMPDIR/repo"
+            # keep old config if exists
+            OLD_CONFIG=""
+            [ -f "$CONFIG_FILE" ] && OLD_CONFIG=$(cat "$CONFIG_FILE")
             rm -rf "$INSTALL_DIR"
-            git clone https://github.com/em2be/nodechecker.git "$INSTALL_DIR"
-            cd "$INSTALL_DIR"
-            chmod +x install.sh checker.sh
-            ./install.sh
+            mkdir -p "$INSTALL_DIR"
+            cp -r "$TMPDIR/repo/"* "$INSTALL_DIR/"
+            rm -rf "$TMPDIR"
+            chmod +x "$INSTALL_DIR/install.sh" "$INSTALL_DIR/checker.sh" "$INSTALL_DIR/node_watcher.py"
+            ln -sf "$INSTALL_DIR/checker.sh" /usr/local/bin/checker
+            if [ -n "$OLD_CONFIG" ]; then
+                echo "$OLD_CONFIG" > "$CONFIG_FILE"
+                echo "✔ Previous config restored."
+                # rewrite service & start
+                cat > /etc/systemd/system/node-watcher.service << EOF
+[Unit]
+Description=Node Watcher - Auto heal & sync for 3X-UI / Sanayi panel
+After=network.target x-ui.service
+Wants=x-ui.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=$INSTALL_DIR
+ExecStart=/usr/bin/python3 $INSTALL_DIR/node_watcher.py
+Restart=always
+RestartSec=8
+StandardOutput=journal
+StandardError=journal
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+                systemctl daemon-reload
+                systemctl enable --now node-watcher
+                echo "✅ Reinstalled and service restarted with old config."
+            else
+                cd "$INSTALL_DIR"
+                ./install.sh
+            fi
             exit 0
             ;;
         4)
@@ -60,7 +98,7 @@ show_menu() {
                 systemctl restart node-watcher
                 echo "✅ Config updated and service restarted."
             else
-                echo "❌ Configuration file not found!"
+                echo "❌ Configuration file not found: $CONFIG_FILE"
             fi
             read -p "Press Enter to return..."
             show_menu
@@ -92,7 +130,7 @@ with open('$CONFIG_FILE', 'r+') as f:
     data = json.load(f)
     data['check_interval'] = int($SECONDS_VAL)
     f.seek(0)
-    json.dump(data, f, indent=2)
+    json.dump(data, f, indent=2, ensure_ascii=False)
     f.truncate()
 "
                     systemctl restart node-watcher
@@ -102,6 +140,16 @@ with open('$CONFIG_FILE', 'r+') as f:
                 fi
             else
                 echo "❌ Configuration file not found!"
+            fi
+            read -p "Press Enter to return..."
+            show_menu
+            ;;
+        9)
+            systemctl status node-watcher --no-pager -l || true
+            echo ""
+            if [ -f "$CONFIG_FILE" ]; then
+                echo "--- Current config ---"
+                cat "$CONFIG_FILE"
             fi
             read -p "Press Enter to return..."
             show_menu

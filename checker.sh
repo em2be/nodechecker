@@ -50,7 +50,6 @@ show_menu() {
             systemctl stop node-watcher 2>/dev/null || true
             TMPDIR=$(mktemp -d)
             git clone "$REPO_URL" "$TMPDIR/repo"
-            # keep old config if exists
             OLD_CONFIG=""
             [ -f "$CONFIG_FILE" ] && OLD_CONFIG=$(cat "$CONFIG_FILE")
             rm -rf "$INSTALL_DIR"
@@ -62,7 +61,6 @@ show_menu() {
             if [ -n "$OLD_CONFIG" ]; then
                 echo "$OLD_CONFIG" > "$CONFIG_FILE"
                 echo "✔ Previous config restored."
-                # rewrite service & start
                 cat > /etc/systemd/system/node-watcher.service << EOF
 [Unit]
 Description=Node Watcher - Auto heal & sync for 3X-UI / Sanayi panel

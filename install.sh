@@ -11,8 +11,17 @@ cd "$INSTALL_DIR"
 
 CONFIG_PATH="${INSTALL_DIR}/inbound_config.json"
 
-read -p "Enter Panel Port (default: 2053): " PANEL_PORT
-PANEL_PORT=${PANEL_PORT:-2053}
+read -p "Is panel using HTTPS? (y/N): " USE_HTTPS
+if [[ "$USE_HTTPS" =~ ^[Yy]$ ]]; then
+  SCHEME="https"
+else
+  SCHEME="http"
+fi
+
+read -p "Enter Panel Port (default: 8080): " PANEL_PORT
+PANEL_PORT=${PANEL_PORT:-8080}
+
+read -p "Enter Base Path (if any, e.g. /xui or leave empty): " BASE_PATH
 
 read -p "Enter Panel Username: " PANEL_USER
 read -sp "Enter Panel Password: " PANEL_PASS
@@ -34,9 +43,10 @@ echo "📝 Generating inbound_config.json..."
 python3 -c "
 import json, sys
 
-panel_url = 'http://127.0.0.1:${PANEL_PORT}'
+panel_url = '${SCHEME}://127.0.0.1:${PANEL_PORT}'
 username = '''${PANEL_USER}'''
 password = '''${PANEL_PASS}'''
+base_path = '''${BASE_PATH}'''
 raw_inbound = '''$INBOUND_JSON'''
 
 try:
@@ -49,7 +59,7 @@ config = {
     'panel_url': panel_url,
     'username': username,
     'password': password,
-    'base_path': '',
+    'base_path': base_path,
     'check_interval': 60,
     'inbound': inbound_data
 }
@@ -68,7 +78,7 @@ echo ""
 echo "📦 [2/3] Installing Python Dependencies..."
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     -o Dpkg::Progress-Fancy="1" \
-    python3-requests python3-pip nano git
+    python3-requests python3-urllib3 python3-pip nano git
 
 echo ""
 echo "⚙️ [3/3] Configuring Systemd Service..."

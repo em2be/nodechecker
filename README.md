@@ -8,9 +8,12 @@
 - اگر اینباند پاک بشه، با تنظیمات ذخیره‌شده + UUID واقعی کلاینت‌ها دوباره می‌سازه
 - جدول `client_inbounds` رو هم درست می‌کنه (Attached inbounds دیگه `---` نمی‌مونه)
 - UUID رندوم نمی‌سازه؛ از جدول `clients` می‌خونه
+- منوی مدیریت (`checker`) برای uninstall / update / edit / logs و ...
 
-## پیش‌نیاز
+## نصب
 
 ```bash
-apt update
-apt install -y python3 jq
+git clone https://github.com/em2be/nodechecker.git
+cd nodechecker
+chmod +x install.sh checker.sh
+sudo ./install.sh

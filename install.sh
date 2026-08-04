@@ -7,7 +7,6 @@ echo "🔒 Node Inbound Watcher Installation"
 echo "======================================"
 
 mkdir -p "$INSTALL_DIR"
-cp node_watcher.py "$INSTALL_DIR/" 2>/dev/null || true
 cd "$INSTALL_DIR"
 
 CONFIG_PATH="${INSTALL_DIR}/inbound_config.json"
@@ -63,15 +62,13 @@ print('✅ Configuration created successfully.')
 
 echo ""
 echo "🔄 [1/3] Updating System Packages..."
-# نمایش پروگرس‌بار لینوکس برای آپدیت مخازن
 DEBIAN_FRONTEND=noninteractive apt-get update -y -o Dpkg::Use-PTY=0
 
 echo ""
-echo "📦 [2/3] Installing Python Dependencies (python3-requests, nano)..."
-# استفاده از گزینه‌های نمایش پیشرفت (Progress indicator) در apt
+echo "📦 [2/3] Installing Python Dependencies..."
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     -o Dpkg::Progress-Fancy="1" \
-    python3-requests python3-pip nano
+    python3-requests python3-pip nano git
 
 echo ""
 echo "⚙️ [3/3] Configuring Systemd Service..."
@@ -84,7 +81,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=${INSTALL_DIR}
-ExecStart=/usr/bin/python3 ${INSTALL_DIR}/node_watcher.py
+ExecStart=/usr/bin/python3 -u ${INSTALL_DIR}/node_watcher.py
 Restart=always
 RestartSec=10
 
@@ -92,7 +89,6 @@ RestartSec=10
 WantedBy=multi-user.target
 SERVICE_EOF
 
-# ایجاد دستور CLI
 cp checker.sh /usr/local/bin/checker 2>/dev/null || true
 chmod +x /usr/local/bin/checker 2>/dev/null || true
 

@@ -6,23 +6,25 @@
     {
       "id": 14,
       "port": 8443,
-      "remark": "My Important Inbound",
+      "remark": "OB8443",
       "protocol": "vless",
       "listen": "",
       "stream_settings": {
-        "network": "tcp",
-        "security": "none",
-        "tcpSettings": {
-          "header": {"type": "none"},
-          "acceptProxyProtocol": false
-        }
+        "network": "ws",
+        "wsSettings": {
+          "acceptProxyProtocol": false,
+          "path": "/",
+          "host": "",
+          "headers": {},
+          "heartbeatPeriod": 0
+        },
+        "security": "none"
       },
       "sniffing": {
-        "enabled": false,
-        "destOverride": ["http", "tls", "quic"]
+        "enabled": false
       },
-      "tag": "in-14-watched",
-      "client_emails": ["USAob8443", "Nob8443"]
+      "tag": "in-8443-tcp",
+      "client_emails": ["OBusr8443"]
     }
   ]
 }

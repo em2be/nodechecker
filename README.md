@@ -5,10 +5,10 @@
 ## ویژگی‌ها
 
 - فقط اینباندهایی که موقع نصب مشخص می‌کنی رو watch می‌کنه
+- JSON کامل اینباند رو می‌گیری → همه اطلاعات (port, clients, streamSettings, ...) خودکار استخراج می‌شه
 - اگر اینباند پاک بشه، با تنظیمات ذخیره‌شده + UUID واقعی کلاینت‌ها دوباره می‌سازه
-- جدول `client_inbounds` رو هم درست می‌کنه (Attached inbounds دیگه `---` نمی‌مونه)
-- UUID رندوم نمی‌سازه؛ از جدول `clients` می‌خونه
-- منوی مدیریت (`checker`) برای uninstall / update / edit / logs و ...
+- جدول `client_inbounds` رو هم درست می‌کنه
+- منوی مدیریت (`checker`)
 
 ## نصب
 
@@ -17,18 +17,3 @@ git clone https://github.com/em2be/nodechecker.git
 cd nodechecker
 chmod +x install.sh checker.sh
 sudo ./install.sh
-
-
-# وضعیت
-systemctl status node-watcher
-
-# لاگ زنده
-journalctl -u node-watcher -f
-
-# ویرایش کانفیگ
-nano /opt/node-watcher/config.json
-systemctl restart node-watcher
-
-# توقف / شروع
-systemctl stop node-watcher
-systemctl start node-watcher

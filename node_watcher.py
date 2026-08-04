@@ -5,7 +5,6 @@ import time
 import requests
 import urllib3
 
-# غیرفعال کردن اخطارهای SSL در صورت استفاده از Self-Signed Certificate
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 CONFIG_FILE = "inbound_config.json"
@@ -27,9 +26,8 @@ def load_config():
 
 def get_session(panel_url, username, password, base_path=""):
     session = requests.Session()
-    session.verify = False  # برای جلوگیری از خطای SSL روی HTTPS
+    session.verify = False
 
-    # اصلاح فرمت آدرس URL
     url_base = panel_url.rstrip("/")
     if base_path and not base_path.startswith("/"):
         base_path = "/" + base_path
@@ -38,9 +36,23 @@ def get_session(panel_url, username, password, base_path=""):
     login_url = f"{url_base}{base_path}/login"
     payload = {"username": username, "password": password}
 
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json",
+    }
+
     try:
-        res = session.post(login_url, data=payload, timeout=10)
-        # اگر پاسخ HTTP نبود یا صفر بود
+        # روش ۱: ارسال به صورت JSON (استاندارد پنل‌های جدید 3x-ui)
+        res = session.post(
+            login_url, json=payload, headers=headers, timeout=10
+        )
+
+        # اگر با JSON خطای 403/405 داد، روش Form-Data تست می‌شود
+        if res.status_code in [403, 405]:
+            res = session.post(
+                login_url, data=payload, headers=headers, timeout=10
+            )
+
         if res.status_code != 200:
             print(
                 f"❌ Login failed with HTTP Status Code: {res.status_code}"
@@ -54,21 +66,23 @@ def get_session(panel_url, username, password, base_path=""):
             print(f"❌ Login failed: {data.get('msg')}")
             return None
     except Exception as e:
-        print(f"❌ Connection error during login to {login_url}: {e}")
+        print(f"❌ Connection error during login: {e}")
         return None
 
 
 def check_and_restore():
     config = load_config()
     if not config:
-        return 30
+        return 5
 
     panel_url = config.get("panel_url", "")
     username = config.get("username", "")
     password = config.get("password", "")
     base_path = config.get("base_path", "")
     target_inbound = config.get("inbound", {})
-    check_interval = int(config.get("check_interval", 60))
+
+    # تنظیم اجباری یا پیش‌فرض روی ۵ ثانیه
+    check_interval = int(config.get("check_interval", 5))
 
     target_port = target_inbound.get("port")
     if not target_port:
@@ -96,7 +110,6 @@ def check_and_restore():
         if inbounds is None:
             inbounds = []
 
-        # بررسی وجود اینباند بر اساس پورت
         exists = any(item.get("port") == target_port for item in inbounds)
 
         if exists:
@@ -130,7 +143,7 @@ def check_and_restore():
                 else target_inbound.get("sniffing"),
             }
 
-            add_res = session.post(add_url, data=payload, timeout=10)
+            add_res = session.post(add_url, json=payload, timeout=10)
             add_data = add_res.json()
 
             if add_data.get("success"):
@@ -157,4 +170,4 @@ if __name__ == "__main__":
         except Exception as main_e:
             print(f"❌ Unexpected error in loop: {main_e}")
             sys.stdout.flush()
-            time.sleep(10)
+            time.sleep(5)

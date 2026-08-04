@@ -33,38 +33,50 @@ def get_session(panel_url, username, password, base_path=""):
         base_path = "/" + base_path
     base_path = base_path.rstrip("/")
 
-    login_url = f"{url_base}{base_path}/login"
-    payload = {"username": username, "password": password}
+    full_base = f"{url_base}{base_path}"
+    login_url = f"{full_base}/login"
 
     headers = {
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Origin": full_base,
+        "Referer": f"{login_url}",
     }
 
+    payload = {"username": username, "password": password}
+
     try:
-        # روش ۱: ارسال به صورت JSON (استاندارد پنل‌های جدید 3x-ui)
+        # تست روش ۱: Form Data (استاندارد اصلی 3x-ui)
         res = session.post(
-            login_url, json=payload, headers=headers, timeout=10
+            login_url, data=payload, headers=headers, timeout=10
         )
 
-        # اگر با JSON خطای 403/405 داد، روش Form-Data تست می‌شود
-        if res.status_code in [403, 405]:
+        # اگر با Form Data خطای 403 داد، روش JSON امتحان می‌شود
+        if res.status_code == 403:
             res = session.post(
-                login_url, data=payload, headers=headers, timeout=10
+                login_url, json=payload, headers=headers, timeout=10
             )
 
         if res.status_code != 200:
             print(
-                f"❌ Login failed with HTTP Status Code: {res.status_code}"
+                f"❌ Login failed with HTTP Status Code: {res.status_code} on {login_url}"
             )
             return None
 
-        data = res.json()
-        if data.get("success"):
-            return session
-        else:
-            print(f"❌ Login failed: {data.get('msg')}")
+        try:
+            data = res.json()
+            if data.get("success"):
+                return session
+            else:
+                print(f"❌ Login failed: {data.get('msg')}")
+                return None
+        except Exception:
+            # اگر خروجی JSON نبود ولی کوکی ست شد
+            if "session" in session.cookies or "x-ui" in session.cookies:
+                return session
+            print("❌ Invalid response format from panel during login.")
             return None
+
     except Exception as e:
         print(f"❌ Connection error during login: {e}")
         return None
@@ -81,7 +93,6 @@ def check_and_restore():
     base_path = config.get("base_path", "")
     target_inbound = config.get("inbound", {})
 
-    # تنظیم اجباری یا پیش‌فرض روی ۵ ثانیه
     check_interval = int(config.get("check_interval", 5))
 
     target_port = target_inbound.get("port")
@@ -98,9 +109,15 @@ def check_and_restore():
         base_path = "/" + base_path
     base_path = base_path.rstrip("/")
 
-    list_url = f"{url_base}{base_path}/panel/api/inbounds/list"
+    full_base = f"{url_base}{base_path}"
+    list_url = f"{full_base}/panel/api/inbounds/list"
+
     try:
         res = session.get(list_url, timeout=10)
+        if res.status_code != 200:
+            print(f"❌ Fetch list failed with status: {res.status_code}")
+            return check_interval
+
         data = res.json()
         if not data.get("success"):
             print(f"❌ Failed to fetch inbounds list: {data.get('msg')}")
@@ -118,7 +135,7 @@ def check_and_restore():
             print(
                 f"⚠️ Inbound on port {target_port} is missing! Restoring..."
             )
-            add_url = f"{url_base}{base_path}/panel/api/inbounds/add"
+            add_url = f"{full_base}/panel/api/inbounds/add"
 
             payload = {
                 "up": target_inbound.get("up", 0),
@@ -143,7 +160,10 @@ def check_and_restore():
                 else target_inbound.get("sniffing"),
             }
 
-            add_res = session.post(add_url, json=payload, timeout=10)
+            headers = {"Accept": "application/json"}
+            add_res = session.post(
+                add_url, data=payload, headers=headers, timeout=10
+            )
             add_data = add_res.json()
 
             if add_data.get("success"):

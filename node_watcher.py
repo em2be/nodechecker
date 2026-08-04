@@ -15,36 +15,56 @@ DB_PATH = get_db_path()
 CONFIG_FILE = "/opt/node-watcher/inbound_config.json"
 
 def sync_and_fix_clients(conn, inbound_id, clients):
-    """اصلاح قطعی پیوند کلاینت‌ها با اینباند جدید بر اساس Email و UUID"""
+    """ایجاد یا بروزرسانی سطر اختصاصی کلاینت در client_traffics به ازای این اینباند"""
     c = conn.cursor()
     c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='client_traffics'")
     if not c.fetchone():
         return
 
+    # دریافت لیست ستون‌های جدول جهت جلوگیری از خطای ساختار دیتابیس
+    c.execute("PRAGMA table_info(client_traffics)")
+    cols = [col[1] for col in c.fetchall()]
+
     for client in clients:
         email = client.get("email", "")
         uuid = client.get("id", "")
+        sub_id = client.get("subId", "")
+        expiry_time = client.get("expiryTime", 0)
+        total_gb = client.get("totalGB", 0)
+        enable = 1 if client.get("enable", True) else 0
 
-        if not email:
+        if not email and not uuid:
             continue
 
-        # ۱. ابتدا بررسی وجود کلاینت با Email یا UUID
-        c.execute("SELECT id FROM client_traffics WHERE email = ? OR uuid = ?", (email, uuid))
+        # بررسی اختصاصی وجود کلاینت برای همین inbound_id خاص
+        c.execute("""SELECT id FROM client_traffics 
+                     WHERE inbound_id = ? AND (email = ? OR (uuid = ? AND uuid != ''))""", 
+                  (inbound_id, email, uuid))
         row = c.fetchone()
 
         if row:
-            # انتقال کلاینت موجود به ID اینباند جدید
+            # اگر سطر مربوط به این اینباند وجود دارد، بروزرسانی کن
             c.execute("""UPDATE client_traffics 
-                         SET inbound_id = ?, enable = 1, uuid = ?
-                         WHERE email = ? OR uuid = ?""", (inbound_id, uuid, email, uuid))
+                         SET enable = ?, uuid = ?, sub_id = ?
+                         WHERE id = ?""", (enable, uuid, sub_id, row[0]))
         else:
-            # درج کلاینت جدید اگر اصلاً در جدول نبود
-            sub_id = client.get("subId", "")
-            c.execute("""INSERT INTO client_traffics 
-                         (inbound_id, enable, email, up, down, expiry_time, total, reset, uuid, sub_id) 
-                         VALUES (?, 1, ?, 0, 0, 0, 0, 0, ?, ?)""", (inbound_id, email, uuid, sub_id))
+            # اگر سطر اختصاصی این اینباند وجود ندارد، یک سطر جدید درج کن
+            fields = ["inbound_id", "enable", "email", "up", "down", "expiry_time", "total", "reset"]
+            values = [inbound_id, enable, email, 0, 0, expiry_time, total_gb, 0]
 
-    # ۲. پاک‌سازی رکوردهای یتیم (ارتباط‌های قدیمی که اینباندشان حذف شده)
+            if "uuid" in cols:
+                fields.append("uuid")
+                values.append(uuid)
+            if "sub_id" in cols:
+                fields.append("sub_id")
+                values.append(sub_id)
+
+            placeholders = ", ".join(["?"] * len(fields))
+            field_names = ", ".join(fields)
+            
+            c.execute(f"INSERT INTO client_traffics ({field_names}) VALUES ({placeholders})", values)
+
+    # پاک‌سازی رکوردهای یتیم اینباندهای حذف‌شده
     c.execute("DELETE FROM client_traffics WHERE inbound_id NOT IN (SELECT id FROM inbounds)")
 
 def check_and_restore_db():
@@ -68,11 +88,10 @@ def check_and_restore_db():
         row = c.execute("SELECT id, enable FROM inbounds WHERE port = ?", (target_port,)).fetchone()
         conn.close()
 
-        # حالت اول: اینباند کلاً وجود ندارد (نیاز به بازسازی)
+        # ۱. اگر اینباند وجود ندارد (حذف شده است)
         if not row:
             print(f"⚠️ Inbound on port {target_port} missing from DB. Restoring...")
             
-            # متوقف کردن x-ui برای خالی کردن کش RAM
             os.system("systemctl stop x-ui")
             time.sleep(1)
 
@@ -100,37 +119,35 @@ def check_and_restore_db():
 
             new_inbound_id = c.lastrowid
 
-            # همگام‌سازی و انتقال کلاینت به ID جدید
+            # ساخت سطر جدید کلاینت متصل به ID جدید اینباند
             sync_and_fix_clients(conn, new_inbound_id, clients)
 
             conn.commit()
             conn.close()
             
             os.system("systemctl start x-ui")
-            print(f"✅ Inbound & Clients on port {target_port} successfully restored (ID: {new_inbound_id})!")
+            print(f"✅ Inbound & Client Row on port {target_port} successfully restored (ID: {new_inbound_id})!")
 
         else:
-            # حالت دوم: اینباند وجود دارد اما بررسی هماهنگی ID کلاینت‌ها لازم است
+            # ۲. بررسی اینکه آیا سطر کلاینت برای ID فعلی اینباند ساخته شده یا خیر
             inbound_id = row[0]
             is_enabled = row[1]
 
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            
-            # بررسی آیا کلاینت متصل به ID قدیمی است یا نه
             settings_dict = target.get("settings", {})
             clients = settings_dict.get("clients", []) if isinstance(settings_dict, dict) else []
-            
-            needs_update = False
+
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+
+            missing_client_link = False
             for client in clients:
                 email = client.get("email", "")
-                c.execute("SELECT inbound_id FROM client_traffics WHERE email = ?", (email,))
-                tr_row = c.fetchone()
-                if tr_row and tr_row[0] != inbound_id:
-                    needs_update = True
+                c.execute("SELECT id FROM client_traffics WHERE inbound_id = ? AND email = ?", (inbound_id, email))
+                if not c.fetchone():
+                    missing_client_link = True
                     break
 
-            if is_enabled == 0 or needs_update:
+            if is_enabled == 0 or missing_client_link:
                 conn.close()
                 os.system("systemctl stop x-ui")
                 time.sleep(1)
@@ -145,7 +162,7 @@ def check_and_restore_db():
                 conn.close()
                 
                 os.system("systemctl start x-ui")
-                print(f"✔ Fixed client-inbound mapping and enabled port {target_port}.")
+                print(f"✔ Attached missing client link to inbound ID {inbound_id}.")
             else:
                 conn.close()
 
@@ -155,7 +172,7 @@ def check_and_restore_db():
     return check_interval
 
 if __name__ == "__main__":
-    print("🚀 Direct DB Node Watcher Running with Relational Fix...")
+    print("🚀 Direct DB Node Watcher Running with Multi-Inbound Client Sync...")
     sys.stdout.flush()
     while True:
         try:

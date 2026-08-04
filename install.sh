@@ -60,7 +60,7 @@ config = {
     'username': username,
     'password': password,
     'base_path': base_path,
-    'check_interval': 60,
+    'check_interval': 5,
     'inbound': inbound_data
 }
 
@@ -72,7 +72,6 @@ print('✅ Configuration created successfully.')
 
 echo ""
 echo "🔄 [1/3] Checking System Package Status..."
-# اگر لیسـت مخازن کمتر از ۲۴ ساعت (۱۴۴۰ دقیقه) پیش آپدیت شده باشد، آپدیت مجدد اسکیپ می‌شود
 if [ -f /var/lib/apt/periodic/update-success-stamp ] && [ $(find /var/lib/apt/periodic/update-success-stamp -mmin -1440 2>/dev/null) ]; then
     echo "⚡ Package list is already up-to-date. Skipping apt-get update..."
 else

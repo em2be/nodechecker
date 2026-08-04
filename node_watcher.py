@@ -14,6 +14,34 @@ def get_db_path():
 DB_PATH = get_db_path()
 CONFIG_FILE = "/opt/node-watcher/inbound_config.json"
 
+def sync_clients_to_traffics(conn, inbound_id, clients):
+    """همگام‌سازی کلاینت‌ها با جدول client_traffics جهت نمایش درست در صفحه Clients"""
+    c = conn.cursor()
+    # بررسی وجود جدول client_traffics در ۳x-ui
+    c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='client_traffics'")
+    if not c.fetchone():
+        return
+
+    for client in clients:
+        email = client.get("email", "")
+        if not email:
+            continue
+        
+        # بررسی وجود کلاینت در جدول
+        c.execute("SELECT id FROM client_traffics WHERE email = ?", (email,))
+        row = c.fetchone()
+        
+        if row:
+            # بروزرسانی inbound_id کلاینت موجود
+            c.execute("""UPDATE client_traffics 
+                         SET inbound_id = ?, enable = 1 
+                         WHERE email = ?""", (inbound_id, email))
+        else:
+            # ایجاد رکورد جدید در صورت عدم وجود
+            c.execute("""INSERT INTO client_traffics 
+                         (inbound_id, enable, email, up, down, expiry_time, total, reset) 
+                         VALUES (?, 1, ?, 0, 0, 0, 0, 0)""", (inbound_id, email))
+
 def check_and_restore_db():
     if not os.path.exists(DB_PATH) or not os.path.exists(CONFIG_FILE):
         return 5
@@ -43,7 +71,10 @@ def check_and_restore_db():
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
 
-            s_str = json.dumps(target.get("settings", {}))
+            settings_dict = target.get("settings", {})
+            clients = settings_dict.get("clients", []) if isinstance(settings_dict, dict) else []
+
+            s_str = json.dumps(settings_dict)
             st_str = json.dumps(target.get("streamSettings", {}))
             sn_str = json.dumps(target.get("sniffing", {}))
 
@@ -59,18 +90,37 @@ def check_and_restore_db():
                              VALUES (1, 0, 0, 0, ?, 1, 0, '', ?, ?, ?, ?, ?)""",
                           (target.get("remark", "Node-Outbound"), target_port, target.get("protocol", "vless"), s_str, st_str, sn_str))
 
+            new_inbound_id = c.lastrowid
+
+            # همگام‌سازی جدول client_traffics با ID جدید اینباند
+            sync_clients_to_traffics(conn, new_inbound_id, clients)
+
             conn.commit()
             conn.close()
             os.system("systemctl start x-ui")
-            print(f"✅ Inbound on port {target_port} successfully restored into DB!")
+            print(f"✅ Inbound & Clients on port {target_port} successfully restored into DB!")
 
         elif row[1] == 0:
+            inbound_id = row[0]
+            settings_dict = target.get("settings", {})
+            clients = settings_dict.get("clients", []) if isinstance(settings_dict, dict) else []
+
             c.execute("UPDATE inbounds SET enable = 1, expiry_time = 0 WHERE port = ?", (target_port,))
+            
+            # همگام‌سازی جدول client_traffics
+            sync_clients_to_traffics(conn, inbound_id, clients)
+
             conn.commit()
             conn.close()
-            print(f"✔ Re-enabled inbound on port {target_port}.")
+            print(f"✔ Re-enabled inbound & synced clients on port {target_port}.")
             os.system("systemctl restart x-ui")
         else:
+            # همگام‌سازی دوره ای جهت اطمینان از اتصال کلاینت‌ها
+            inbound_id = row[0]
+            settings_dict = target.get("settings", {})
+            clients = settings_dict.get("clients", []) if isinstance(settings_dict, dict) else []
+            sync_clients_to_traffics(conn, inbound_id, clients)
+            conn.commit()
             conn.close()
 
     except Exception as e:
@@ -79,7 +129,7 @@ def check_and_restore_db():
     return check_interval
 
 if __name__ == "__main__":
-    print("🚀 Direct DB Node Watcher Running...")
+    print("🚀 Direct DB Node Watcher Running with Client Sync...")
     sys.stdout.flush()
     while True:
         try:

@@ -6,7 +6,6 @@ INSTALL_DIR="/opt/node-watcher"
 echo "🔒 Node Inbound Watcher Installation"
 echo "======================================"
 
-# ساخت پوشه اختصاصی جهت جلوگیری از مشکلات مسیردهی
 mkdir -p "$INSTALL_DIR"
 cp node_watcher.py "$INSTALL_DIR/" 2>/dev/null || true
 cd "$INSTALL_DIR"
@@ -31,6 +30,7 @@ if [ -z "$INBOUND_JSON" ]; then
   exit 1
 fi
 
+echo ""
 echo "📝 Generating inbound_config.json..."
 python3 -c "
 import json, sys
@@ -61,10 +61,20 @@ with open('$CONFIG_PATH', 'w', encoding='utf-8') as f:
 print('✅ Configuration created successfully.')
 "
 
-echo "📦 Installing requirements..."
-DEBIAN_FRONTEND=noninteractive apt-get update -y > /dev/null
-DEBIAN_FRONTEND=noninteractive apt-get install -y python3-requests python3-pip nano > /dev/null
+echo ""
+echo "🔄 [1/3] Updating System Packages..."
+# نمایش پروگرس‌بار لینوکس برای آپدیت مخازن
+DEBIAN_FRONTEND=noninteractive apt-get update -y -o Dpkg::Use-PTY=0
 
+echo ""
+echo "📦 [2/3] Installing Python Dependencies (python3-requests, nano)..."
+# استفاده از گزینه‌های نمایش پیشرفت (Progress indicator) در apt
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    -o Dpkg::Progress-Fancy="1" \
+    python3-requests python3-pip nano
+
+echo ""
+echo "⚙️ [3/3] Configuring Systemd Service..."
 cat <<SERVICE_EOF > /etc/systemd/system/node-watcher.service
 [Unit]
 Description=Node Inbound Auto Healing Service
@@ -82,13 +92,16 @@ RestartSec=10
 WantedBy=multi-user.target
 SERVICE_EOF
 
-# ایجاد دستور checker
-cp checker.sh /usr/local/bin/checker
-chmod +x /usr/local/bin/checker
+# ایجاد دستور CLI
+cp checker.sh /usr/local/bin/checker 2>/dev/null || true
+chmod +x /usr/local/bin/checker 2>/dev/null || true
 
 systemctl daemon-reload
 systemctl enable node-watcher
 systemctl restart node-watcher
 
 echo ""
-echo "✅ Setup finished! Type 'checker' in your terminal to open management menu."
+echo "===================================================="
+echo "✅ Installation completed successfully!"
+echo "👉 Type 'checker' in your terminal to open management menu."
+echo "===================================================="

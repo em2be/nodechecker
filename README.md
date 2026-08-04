@@ -1,11 +1,14 @@
-# Node Inbound Watcher
+# 🛡️ Node Inbound Watcher (3x-ui / Sanaei)
 
-Auto-healing service for 3x-ui node inbounds. Re-creates deleted inbounds and re-attaches target clients every 60 seconds.
+An automated background watcher service designed for **3x-ui (Sanaei)** node servers. 
 
-## Quick Installation
+If a Master server overwrites or deletes local tunnel inbounds during sync cycles, this service automatically detects the missing inbound and client, re-creates them via local API, and re-attaches target users within 60 seconds.
+
+---
+
+## ⚡ One-Line Installation
+
+Run the following command on your **Node Server** via SSH:
 
 ```bash
-git clone [https://github.com/YOUR_USERNAME/YOUR_REPO.git](https://github.com/YOUR_USERNAME/YOUR_REPO.git) node-watcher
-cd node-watcher
-chmod +x install.sh
-./install.sh
+git clone [https://github.com/em2be/nodechecker.git](https://github.com/em2be/nodechecker.git) node-watcher && cd node-watcher && chmod +x install.sh && ./install.sh

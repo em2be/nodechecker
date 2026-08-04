@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-node_watcher.py  –  Auto-heal + Sync for Sanayi / 3X-UI panel
-Compatible with the multi-table schema:
-  clients  +  client_inbounds  +  client_traffics  +  inbounds
+node_watcher.py – Configurable Auto-heal + Sync for Sanayi / 3X-UI
+Only watches the inbounds defined in config.json
 """
 
 import time
@@ -10,11 +9,28 @@ import json
 import sqlite3
 import subprocess
 import logging
-from datetime import datetime
+import os
+import sys
+from pathlib import Path
 
-DB_PATH = "/etc/x-ui/x-ui.db"
-CHECK_INTERVAL = 15          # seconds
-LOG_FILE = "/var/log/node_watcher.log"
+CONFIG_PATH = Path(__file__).parent / "config.json"
+
+# ---------- load config ----------
+if not CONFIG_PATH.exists():
+    print("❌ config.json not found. Run install.sh first.")
+    sys.exit(1)
+
+with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+    CFG = json.load(f)
+
+DB_PATH = CFG.get("db_path", "/etc/x-ui/x-ui.db")
+CHECK_INTERVAL = int(CFG.get("check_interval", 15))
+LOG_FILE = CFG.get("log_file", "/var/log/node_watcher.log")
+WATCHED = CFG.get("watched_inbounds", [])
+
+if not WATCHED:
+    print("❌ No inbounds defined in config.json")
+    sys.exit(1)
 
 # ---------- logging ----------
 logging.basicConfig(
@@ -40,48 +56,176 @@ def stop_xui():
     try:
         subprocess.run(["systemctl", "stop", "x-ui"], check=False, timeout=20)
         time.sleep(1.5)
-        log.info("x-ui service stopped")
+        log.info("x-ui stopped")
     except Exception as e:
-        log.warning(f"Failed to stop x-ui: {e}")
+        log.warning(f"stop x-ui failed: {e}")
 
 
 def start_xui():
     try:
         subprocess.run(["systemctl", "start", "x-ui"], check=False, timeout=20)
         time.sleep(2)
-        log.info("x-ui service started")
+        log.info("x-ui started")
     except Exception as e:
-        log.warning(f"Failed to start x-ui: {e}")
+        log.warning(f"start x-ui failed: {e}")
 
 
-def table_exists(cursor, name: str) -> bool:
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,))
-    return cursor.fetchone() is not None
+def table_exists(cur, name: str) -> bool:
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,))
+    return cur.fetchone() is not None
 
 
-def get_columns(cursor, table: str) -> set:
-    cursor.execute(f"PRAGMA table_info({table})")
-    return {row["name"] for row in cursor.fetchall()}
-
-
-def build_client_json(client_row: sqlite3.Row) -> dict:
-    """Build the client object that goes inside inbounds.settings JSON."""
+def build_client_json(row: sqlite3.Row) -> dict:
     now_ms = int(time.time() * 1000)
     return {
-        "id": client_row["uuid"] or "",
-        "email": client_row["email"],
-        "flow": client_row["flow"] or "",
-        "limitIp": client_row["limit_ip"] or 0,
-        "totalGB": client_row["total_gb"] or 0,
-        "expiryTime": client_row["expiry_time"] or 0,
-        "enable": bool(client_row["enable"]) if client_row["enable"] is not None else True,
-        "tgId": client_row["tg_id"] or 0,
-        "subId": client_row["sub_id"] or "",
-        "reset": client_row["reset"] or 0,
-        "comment": client_row["comment"] or "",
-        "created_at": client_row["created_at"] or now_ms,
-        "updated_at": client_row["updated_at"] or now_ms,
+        "id": row["uuid"] or "",
+        "email": row["email"],
+        "flow": row["flow"] or "",
+        "limitIp": row["limit_ip"] or 0,
+        "totalGB": row["total_gb"] or 0,
+        "expiryTime": row["expiry_time"] or 0,
+        "enable": bool(row["enable"]) if row["enable"] is not None else True,
+        "tgId": row["tg_id"] or 0,
+        "subId": row["sub_id"] or "",
+        "reset": row["reset"] or 0,
+        "comment": row["comment"] or "",
+        "created_at": row["created_at"] or now_ms,
+        "updated_at": row["updated_at"] or now_ms,
     }
+
+
+def restore_inbound(cur, item: dict):
+    """Create the inbound from the saved config + real clients from DB."""
+    inbound_id = item["id"]
+    emails = item.get("client_emails", [])
+
+    clients_json = []
+    client_ids = []
+
+    if emails and table_exists(cur, "clients"):
+        placeholders = ",".join("?" * len(emails))
+        cur.execute(f"SELECT * FROM clients WHERE email IN ({placeholders})", emails)
+        for row in cur.fetchall():
+            clients_json.append(build_client_json(row))
+            client_ids.append(row["id"])
+
+    settings = {
+        "clients": clients_json,
+        "decryption": "none",
+        "fallbacks": []
+    }
+
+    stream_settings = json.dumps(item.get("stream_settings", {
+        "network": "tcp",
+        "security": "none",
+        "tcpSettings": {"header": {"type": "none"}, "acceptProxyProtocol": False}
+    }), ensure_ascii=False)
+
+    sniffing = json.dumps(item.get("sniffing", {
+        "enabled": False,
+        "destOverride": ["http", "tls", "quic"]
+    }), ensure_ascii=False)
+
+    tag = item.get("tag") or f"in-{inbound_id}-watched"
+    remark = item.get("remark") or f"Watched_Inbound_{inbound_id}"
+    port = item.get("port", 8443)
+    protocol = item.get("protocol", "vless")
+    listen = item.get("listen", "")
+
+    cur.execute("""
+        INSERT INTO inbounds
+        (id, user_id, up, down, total, remark, enable, expiry_time,
+         listen, port, protocol, settings, stream_settings, tag, sniffing)
+        VALUES (?, 1, 0, 0, 0, ?, 1, 0, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        inbound_id,
+        remark,
+        listen,
+        port,
+        protocol,
+        json.dumps(settings, ensure_ascii=False),
+        stream_settings,
+        tag,
+        sniffing
+    ))
+
+    # link clients
+    if table_exists(cur, "client_inbounds") and client_ids:
+        now_ms = int(time.time() * 1000)
+        for cid in client_ids:
+            cur.execute("""
+                INSERT OR IGNORE INTO client_inbounds
+                (client_id, inbound_id, flow_override, created_at)
+                VALUES (?, ?, NULL, ?)
+            """, (cid, inbound_id, now_ms))
+
+    # make sure client_traffics points to this inbound
+    for email in emails:
+        cur.execute(
+            "UPDATE client_traffics SET inbound_id = ? WHERE email = ?",
+            (inbound_id, email)
+        )
+
+    log.info(f"✅ Restored inbound ID {inbound_id} ({remark}) with {len(clients_json)} clients")
+
+
+def fix_links_and_settings(cur, item: dict):
+    """Ensure client_inbounds links + settings JSON are correct for an existing inbound."""
+    inbound_id = item["id"]
+    emails = item.get("client_emails", [])
+    if not emails:
+        return False
+
+    changed = False
+    now_ms = int(time.time() * 1000)
+
+    # 1. client_inbounds links
+    if table_exists(cur, "clients") and table_exists(cur, "client_inbounds"):
+        placeholders = ",".join("?" * len(emails))
+        cur.execute(f"SELECT id, email FROM clients WHERE email IN ({placeholders})", emails)
+        for row in cur.fetchall():
+            cur.execute("""
+                INSERT OR IGNORE INTO client_inbounds
+                (client_id, inbound_id, flow_override, created_at)
+                VALUES (?, ?, NULL, ?)
+            """, (row["id"], inbound_id, now_ms))
+            if cur.rowcount > 0:
+                log.info(f"🔗 Linked {row['email']} → inbound {inbound_id}")
+                changed = True
+
+    # 2. rebuild settings JSON with real UUIDs
+    if table_exists(cur, "clients"):
+        placeholders = ",".join("?" * len(emails))
+        cur.execute(f"SELECT * FROM clients WHERE email IN ({placeholders})", emails)
+        real_clients = [build_client_json(r) for r in cur.fetchall()]
+
+        cur.execute("SELECT settings FROM inbounds WHERE id = ?", (inbound_id,))
+        row = cur.fetchone()
+        if row:
+            try:
+                settings = json.loads(row["settings"] or "{}")
+            except Exception:
+                settings = {}
+            settings["clients"] = real_clients
+            settings.setdefault("decryption", "none")
+            settings.setdefault("fallbacks", [])
+            cur.execute(
+                "UPDATE inbounds SET settings = ? WHERE id = ?",
+                (json.dumps(settings, ensure_ascii=False), inbound_id)
+            )
+            changed = True
+            log.info(f"🔄 Updated settings JSON for inbound {inbound_id}")
+
+    # 3. client_traffics inbound_id
+    for email in emails:
+        cur.execute(
+            "UPDATE client_traffics SET inbound_id = ? WHERE email = ? AND (inbound_id IS NULL OR inbound_id != ?)",
+            (inbound_id, email, inbound_id)
+        )
+        if cur.rowcount > 0:
+            changed = True
+
+    return changed
 
 
 def auto_heal_and_sync():
@@ -91,274 +235,41 @@ def auto_heal_and_sync():
         conn = get_conn()
         cur = conn.cursor()
 
-        # ---- safety checks ----
         if not table_exists(cur, "inbounds") or not table_exists(cur, "client_traffics"):
-            log.error("Required tables missing – abort")
+            log.error("Required tables missing")
             return
 
-        has_clients_table = table_exists(cur, "clients")
-        has_client_inbounds = table_exists(cur, "client_inbounds")
-        ct_cols = get_columns(cur, "client_traffics")
-        clients_cols = get_columns(cur, "clients") if has_clients_table else set()
+        for item in WATCHED:
+            inbound_id = item["id"]
 
-        # ============================================================
-        # 1. Find orphaned inbound_ids (exist in client_traffics but not in inbounds)
-        # ============================================================
-        cur.execute("""
-            SELECT DISTINCT inbound_id
-            FROM client_traffics
-            WHERE inbound_id IS NOT NULL
-              AND inbound_id NOT IN (SELECT id FROM inbounds)
-        """)
-        orphans = [row["inbound_id"] for row in cur.fetchall()]
+            cur.execute("SELECT id FROM inbounds WHERE id = ?", (inbound_id,))
+            exists = cur.fetchone() is not None
 
-        if orphans:
-            stop_xui()
-            # re-open connection after stop
-            conn.close()
-            conn = get_conn()
-            cur = conn.cursor()
-            modified = True
-
-            for missing_id in orphans:
-                log.info(f"Orphaned inbound_id detected → {missing_id}")
-
-                # Collect all client emails that belong to this inbound_id
-                cur.execute(
-                    "SELECT email FROM client_traffics WHERE inbound_id = ?",
-                    (missing_id,)
-                )
-                emails = [r["email"] for r in cur.fetchall() if r["email"]]
-
-                clients_json = []
-                client_ids_to_link = []   # list of (client_id, inbound_id)
-
-                if has_clients_table and emails:
-                    placeholders = ",".join("?" * len(emails))
-                    cur.execute(
-                        f"SELECT * FROM clients WHERE email IN ({placeholders})",
-                        emails
-                    )
-                    for crow in cur.fetchall():
-                        clients_json.append(build_client_json(crow))
-                        client_ids_to_link.append(crow["id"])
-                else:
-                    # fallback – create minimal entries (should rarely happen)
-                    for email in emails:
-                        import uuid as uuid_mod
-                        clients_json.append({
-                            "id": str(uuid_mod.uuid4()),
-                            "email": email,
-                            "flow": "",
-                            "limitIp": 0,
-                            "totalGB": 0,
-                            "expiryTime": 0,
-                            "enable": True,
-                            "tgId": 0,
-                            "subId": "",
-                            "reset": 0,
-                            "comment": "",
-                        })
-
-                settings = json.dumps({
-                    "clients": clients_json,
-                    "decryption": "none",
-                    "fallbacks": []
-                }, ensure_ascii=False)
-
-                # Keep stream_settings simple & compatible
-                stream_settings = json.dumps({
-                    "network": "tcp",
-                    "security": "none",
-                    "tcpSettings": {
-                        "header": {"type": "none"},
-                        "acceptProxyProtocol": False
-                    }
-                })
-
-                sniffing = json.dumps({
-                    "enabled": False,
-                    "destOverride": ["http", "tls", "quic"]
-                })
-
-                tag = f"in-{missing_id}-restored"
-
-                # Insert the inbound (preserve original id)
-                cur.execute("""
-                    INSERT INTO inbounds
-                    (id, user_id, up, down, total, remark, enable, expiry_time,
-                     listen, port, protocol, settings, stream_settings, tag, sniffing)
-                    VALUES (?, 1, 0, 0, 0, ?, 1, 0, '', 8443, 'vless', ?, ?, ?, ?)
-                """, (
-                    missing_id,
-                    f"Restored_Inbound_{missing_id}",
-                    settings,
-                    stream_settings,
-                    tag,
-                    sniffing
-                ))
-
-                # Link clients via client_inbounds
-                if has_client_inbounds and client_ids_to_link:
-                    now_ms = int(time.time() * 1000)
-                    for cid in client_ids_to_link:
-                        # avoid duplicate primary-key error
-                        cur.execute("""
-                            INSERT OR IGNORE INTO client_inbounds
-                            (client_id, inbound_id, flow_override, created_at)
-                            VALUES (?, ?, NULL, ?)
-                        """, (cid, missing_id, now_ms))
-
-                conn.commit()
-                log.info(f"✅ Restored inbound ID {missing_id} with {len(clients_json)} clients + client_inbounds links")
-
-        # ============================================================
-        # 2. Sync existing inbounds (only if we did NOT just restore)
-        # ============================================================
-        if not modified:
-            cur.execute("SELECT id, settings FROM inbounds")
-            for inbound in cur.fetchall():
-                inbound_id = inbound["id"]
-                try:
-                    settings = json.loads(inbound["settings"] or "{}")
-                except Exception:
-                    settings = {}
-
-                if "clients" not in settings or not isinstance(settings["clients"], list):
-                    settings["clients"] = []
-
-                existing_emails = {c.get("email"): c for c in settings["clients"] if c.get("email")}
-
-                # clients that belong to this inbound according to client_traffics
-                cur.execute(
-                    "SELECT email FROM client_traffics WHERE inbound_id = ?",
-                    (inbound_id,)
-                )
-                db_emails = [r["email"] for r in cur.fetchall() if r["email"]]
-
-                changed = False
-                for email in db_emails:
-                    if email in existing_emails:
-                        continue
-
-                    # need to add this client into settings
-                    if has_clients_table:
-                        cur.execute("SELECT * FROM clients WHERE email = ?", (email,))
-                        crow = cur.fetchone()
-                        if crow:
-                            settings["clients"].append(build_client_json(crow))
-                            changed = True
-
-                            # also ensure client_inbounds link exists
-                            if has_client_inbounds:
-                                now_ms = int(time.time() * 1000)
-                                cur.execute("""
-                                    INSERT OR IGNORE INTO client_inbounds
-                                    (client_id, inbound_id, flow_override, created_at)
-                                    VALUES (?, ?, NULL, ?)
-                                """, (crow["id"], inbound_id, now_ms))
-                        else:
-                            log.warning(f"Email {email} exists in client_traffics but not in clients table")
-                    else:
-                        import uuid as uuid_mod
-                        settings["clients"].append({
-                            "id": str(uuid_mod.uuid4()),
-                            "email": email,
-                            "flow": "",
-                            "limitIp": 0,
-                            "totalGB": 0,
-                            "expiryTime": 0,
-                            "enable": True,
-                            "tgId": 0,
-                            "subId": "",
-                        })
-                        changed = True
-
-                if changed:
-                    if not modified:
-                        stop_xui()
-                        conn.close()
-                        conn = get_conn()
-                        cur = conn.cursor()
-                        modified = True
-
-                    cur.execute(
-                        "UPDATE inbounds SET settings = ? WHERE id = ?",
-                        (json.dumps(settings, ensure_ascii=False), inbound_id)
-                    )
-                    conn.commit()
-                    log.info(f"✔ Synced clients for inbound ID {inbound_id}")
-
-        # ============================================================
-        # 3. Fix missing client_inbounds links for already-restored inbounds
-        #    (covers the current broken state of inbound 14)
-        # ============================================================
-        if has_clients_table and has_client_inbounds:
-            cur.execute("""
-                SELECT ct.inbound_id, c.id AS client_id, c.email
-                FROM client_traffics ct
-                JOIN clients c ON c.email = ct.email
-                WHERE ct.inbound_id IS NOT NULL
-                  AND ct.inbound_id IN (SELECT id FROM inbounds)
-                  AND NOT EXISTS (
-                      SELECT 1 FROM client_inbounds ci
-                      WHERE ci.client_id = c.id AND ci.inbound_id = ct.inbound_id
-                  )
-            """)
-            missing_links = cur.fetchall()
-
-            if missing_links:
+            if not exists:
+                # orphan → restore
                 if not modified:
                     stop_xui()
                     conn.close()
                     conn = get_conn()
                     cur = conn.cursor()
                     modified = True
-
-                now_ms = int(time.time() * 1000)
-                for row in missing_links:
-                    cur.execute("""
-                        INSERT OR IGNORE INTO client_inbounds
-                        (client_id, inbound_id, flow_override, created_at)
-                        VALUES (?, ?, NULL, ?)
-                    """, (row["client_id"], row["inbound_id"], now_ms))
-                    log.info(f"🔗 Linked client {row['email']} → inbound {row['inbound_id']}")
-
-                # Also make sure the settings JSON of those inbounds contains the correct UUIDs
-                affected_inbounds = {r["inbound_id"] for r in missing_links}
-                for iid in affected_inbounds:
-                    cur.execute("SELECT settings FROM inbounds WHERE id = ?", (iid,))
-                    row = cur.fetchone()
-                    if not row:
-                        continue
-                    try:
-                        settings = json.loads(row["settings"] or "{}")
-                    except Exception:
-                        settings = {"clients": []}
-
-                    # rebuild clients list from real data
-                    cur.execute("""
-                        SELECT c.* FROM clients c
-                        JOIN client_traffics ct ON ct.email = c.email
-                        WHERE ct.inbound_id = ?
-                    """, (iid,))
-                    real_clients = [build_client_json(r) for r in cur.fetchall()]
-                    settings["clients"] = real_clients
-                    if "decryption" not in settings:
-                        settings["decryption"] = "none"
-                    if "fallbacks" not in settings:
-                        settings["fallbacks"] = []
-
-                    cur.execute(
-                        "UPDATE inbounds SET settings = ? WHERE id = ?",
-                        (json.dumps(settings, ensure_ascii=False), iid)
-                    )
-                    log.info(f"🔄 Rebuilt settings JSON for inbound {iid} with real UUIDs")
-
+                restore_inbound(cur, item)
                 conn.commit()
+            else:
+                # exists → just make sure links + settings are healthy
+                if fix_links_and_settings(cur, item):
+                    if not modified:
+                        stop_xui()
+                        conn.close()
+                        conn = get_conn()
+                        cur = conn.cursor()
+                        modified = True
+                        # re-run fix after re-open
+                        fix_links_and_settings(cur, item)
+                    conn.commit()
 
     except Exception as e:
-        log.error(f"Error in watcher: {e}", exc_info=True)
+        log.error(f"Error: {e}", exc_info=True)
     finally:
         if conn:
             try:
@@ -370,10 +281,12 @@ def auto_heal_and_sync():
 
 
 if __name__ == "__main__":
-    log.info("🚀 Node Watcher (Sanayi-compatible) started")
+    log.info(f"🚀 Node Watcher started – watching {len(WATCHED)} inbound(s)")
+    for w in WATCHED:
+        log.info(f"   • ID {w['id']}  port={w.get('port')}  emails={w.get('client_emails', [])}")
     while True:
         try:
             auto_heal_and_sync()
         except Exception as e:
-            log.error(f"Unexpected error: {e}", exc_info=True)
+            log.error(f"Unexpected: {e}", exc_info=True)
         time.sleep(CHECK_INTERVAL)

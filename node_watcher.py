@@ -3,6 +3,10 @@ import os
 import sys
 import time
 import requests
+import urllib3
+
+# غیرفعال کردن اخطارهای SSL در صورت استفاده از Self-Signed Certificate
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 CONFIG_FILE = "inbound_config.json"
 
@@ -23,11 +27,26 @@ def load_config():
 
 def get_session(panel_url, username, password, base_path=""):
     session = requests.Session()
-    login_url = f"{panel_url.rstrip('/')}{base_path}/login"
+    session.verify = False  # برای جلوگیری از خطای SSL روی HTTPS
+
+    # اصلاح فرمت آدرس URL
+    url_base = panel_url.rstrip("/")
+    if base_path and not base_path.startswith("/"):
+        base_path = "/" + base_path
+    base_path = base_path.rstrip("/")
+
+    login_url = f"{url_base}{base_path}/login"
     payload = {"username": username, "password": password}
 
     try:
         res = session.post(login_url, data=payload, timeout=10)
+        # اگر پاسخ HTTP نبود یا صفر بود
+        if res.status_code != 200:
+            print(
+                f"❌ Login failed with HTTP Status Code: {res.status_code}"
+            )
+            return None
+
         data = res.json()
         if data.get("success"):
             return session
@@ -35,7 +54,7 @@ def get_session(panel_url, username, password, base_path=""):
             print(f"❌ Login failed: {data.get('msg')}")
             return None
     except Exception as e:
-        print(f"❌ Connection error during login: {e}")
+        print(f"❌ Connection error during login to {login_url}: {e}")
         return None
 
 
@@ -60,7 +79,12 @@ def check_and_restore():
     if not session:
         return check_interval
 
-    list_url = f"{panel_url.rstrip('/')}{base_path}/panel/api/inbounds/list"
+    url_base = panel_url.rstrip("/")
+    if base_path and not base_path.startswith("/"):
+        base_path = "/" + base_path
+    base_path = base_path.rstrip("/")
+
+    list_url = f"{url_base}{base_path}/panel/api/inbounds/list"
     try:
         res = session.get(list_url, timeout=10)
         data = res.json()
@@ -81,11 +105,8 @@ def check_and_restore():
             print(
                 f"⚠️ Inbound on port {target_port} is missing! Restoring..."
             )
-            add_url = (
-                f"{panel_url.rstrip('/')}{base_path}/panel/api/inbounds/add"
-            )
+            add_url = f"{url_base}{base_path}/panel/api/inbounds/add"
 
-            # ساخت Payload استاندارد برای API پنل 3x-ui
             payload = {
                 "up": target_inbound.get("up", 0),
                 "down": target_inbound.get("down", 0),

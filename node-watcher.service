@@ -12,8 +12,6 @@ Restart=always
 RestartSec=8
 StandardOutput=journal
 StandardError=journal
-
-# Safety
 LimitNOFILE=65535
 
 [Install]

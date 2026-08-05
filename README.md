@@ -27,3 +27,22 @@ git clone https://github.com/em2be/nodechecker.git
 cd nodechecker
 chmod +x install.sh checker.sh
 sudo ./install.sh
+```
+
+# وضعیت
+```bash
+systemctl status node-watcher
+```
+# لاگ زنده
+```bash
+journalctl -u node-watcher -f
+```
+# ری‌استارت
+```bash
+systemctl restart node-watcher
+```
+# ویرایش کانفیگ (یا از منوی checker گزینه ۱۰)
+```bash
+nano /opt/node-watcher/config.json
+systemctl restart node-watcher
+```

@@ -27,6 +27,67 @@ need_cmd() {
     command -v "$1" >/dev/null 2>&1
 }
 
+read_json_paste() {
+    local label="$1"
+    echo ""
+    echo ">>> $label"
+    echo "    JSON کامل را پیست کنید، بعد Ctrl+D بزنید:"
+    echo "----------------------------------------"
+    local raw
+    raw=$(cat)
+    echo "----------------------------------------"
+    if ! echo "$raw" | jq empty 2>/dev/null; then
+        echo "❌ JSON نامعتبر است"
+        return 1
+    fi
+    echo "$raw"
+}
+
+normalize_inbound_json() {
+    local raw
+    raw=$(cat)
+    echo "$raw" | jq '
+      (if type == "array" then .[0] else . end) as $o |
+      {
+        id: ($o.id // $o.Id // 0),
+        port: ($o.port // $o.Port // 8443),
+        remark: ($o.remark // $o.Remark // ("Watched_" + (($o.id // 0)|tostring))),
+        protocol: ($o.protocol // $o.Protocol // "vless"),
+        listen: ($o.listen // $o.Listen // ""),
+        tag: ($o.tag // $o.Tag // ("in-" + (($o.id // 0)|tostring) + "-watched")),
+        stream_settings: (
+          if ($o.stream_settings | type) == "object" then $o.stream_settings
+          elif ($o.streamSettings | type) == "object" then $o.streamSettings
+          elif ($o.stream_settings | type) == "string" then ($o.stream_settings | fromjson? // {})
+          elif ($o.streamSettings | type) == "string" then ($o.streamSettings | fromjson? // {})
+          else {"network":"tcp","security":"none"} end
+        ),
+        sniffing: (
+          if ($o.sniffing | type) == "object" then $o.sniffing
+          elif ($o.sniffing | type) == "string" then ($o.sniffing | fromjson? // {})
+          else {"enabled":false} end
+        ),
+        client_emails: (
+          if ($o.client_emails | type) == "array" then $o.client_emails
+          elif ($o.settings | type) == "object" and ($o.settings.clients | type) == "array" then
+            [$o.settings.clients[]?.email // empty]
+          elif ($o.settings | type) == "string" then
+            (($o.settings | fromjson? // {}) | .clients // []) | map(.email // empty) | map(select(. != ""))
+          elif ($o.clients | type) == "array" then
+            [$o.clients[]?.email // empty]
+          else [] end
+        ),
+        clients: (
+          if ($o.clients | type) == "array" and (($o.clients|length) > 0) then $o.clients
+          elif ($o.settings | type) == "object" and ($o.settings.clients | type) == "array" then $o.settings.clients
+          elif ($o.settings | type) == "string" then
+            (($o.settings | fromjson? // {}) | .clients // [])
+          else [] end
+        )
+      }
+    '
+}
+
 echo "Checking prerequisites..."
 MISSING=()
 need_cmd python3 || MISSING+=("python3")
@@ -51,6 +112,9 @@ echo ""
 systemctl stop node-watcher 2>/dev/null || true
 
 mkdir -p "$INSTALL_DIR"
+mkdir -p "$INSTALL_DIR/backups"
+mkdir -p "$INSTALL_DIR/IMPORT"
+
 cp "$SCRIPT_DIR/node_watcher.py" "$INSTALL_DIR/"
 cp "$SCRIPT_DIR/checker.sh" "$INSTALL_DIR/" 2>/dev/null || true
 chmod +x "$INSTALL_DIR/node_watcher.py"
@@ -66,64 +130,29 @@ if ! [[ "$NUM" =~ ^[0-9]+$ ]] || [ "$NUM" -lt 1 ]; then
 fi
 
 echo ""
-echo "حالا برای هر inbound اطلاعات لازم رو وارد کن."
+echo "برای هر inbound، JSON کامل را از پنل Export کن و پیست کن."
+echo "(بعد از پیست، Ctrl+D بزن)"
 echo ""
 
 WATCHED_JSON="[]"
 
 for ((i=1; i<=NUM; i++)); do
-    echo "---------- Inbound #$i از $NUM ----------"
+    echo "========== Inbound #$i از $NUM =========="
+    RAW=""
+    while true; do
+        RAW=$(read_json_paste "Inbound #$i") || continue
+        break
+    done
 
-    ID=$(ask "  ID اینباند (عدد)" "")
-    PORT=$(ask "  Port" "8443")
-    REMARK=$(ask "  Remark / نام" "Watched_Inbound_$ID")
-    PROTOCOL=$(ask "  Protocol" "vless")
-    TAG=$(ask "  Tag" "in-${ID}-watched")
-
-    echo ""
-    echo "  ایمیل کلاینت‌هایی که متعلق به این inbound هستن رو وارد کن"
-    echo "  (با کاما جدا کن، مثال: USAob8443,Nob8443)"
-    EMAILS_RAW=$(ask "  Client emails" "")
-
-    EMAILS_JSON="[]"
-    if [ -n "$EMAILS_RAW" ]; then
-        EMAILS_JSON=$(echo "$EMAILS_RAW" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | jq -R . | jq -s .)
-    fi
+    ITEM=$(echo "$RAW" | normalize_inbound_json) || {
+        echo "❌ نتوانست JSON را نرمال کند"
+        exit 1
+    }
 
     echo ""
-    echo "  آیا می‌خوای stream_settings و sniffing پیش‌فرض باشه؟ (y/n)"
-    USE_DEFAULT=$(ask "  پیش‌فرض؟" "y")
-
-    if [[ "$USE_DEFAULT" =~ ^[Yy]$ ]]; then
-        STREAM='{"network":"tcp","security":"none","tcpSettings":{"header":{"type":"none"},"acceptProxyProtocol":false}}'
-        SNIFF='{"enabled":false,"destOverride":["http","tls","quic"]}'
-    else
-        echo "  stream_settings رو به صورت یک خط JSON وارد کن:"
-        read -r STREAM
-        echo "  sniffing رو به صورت یک خط JSON وارد کن:"
-        read -r SNIFF
-    fi
-
-    ITEM=$(jq -n \
-        --argjson id "$ID" \
-        --argjson port "$PORT" \
-        --arg remark "$REMARK" \
-        --arg protocol "$PROTOCOL" \
-        --arg tag "$TAG" \
-        --argjson emails "$EMAILS_JSON" \
-        --argjson stream "$STREAM" \
-        --argjson sniff "$SNIFF" \
-        '{
-            id: $id,
-            port: $port,
-            remark: $remark,
-            protocol: $protocol,
-            listen: "",
-            tag: $tag,
-            client_emails: $emails,
-            stream_settings: $stream,
-            sniffing: $sniff
-        }')
+    echo "  خلاصه:"
+    echo "$ITEM" | jq -r '"  ID=\(.id)  port=\(.port)  remark=\(.remark)  clients=\(.client_emails|join(","))"'
+    echo ""
 
     WATCHED_JSON=$(echo "$WATCHED_JSON" | jq --argjson item "$ITEM" '. + [$item]')
     echo "  ✔ Inbound #$i ثبت شد"
@@ -181,4 +210,6 @@ echo "=============================================="
 echo ""
 echo "منوی مدیریت:  checker"
 echo "لاگ زنده:     journalctl -u node-watcher -f"
+echo "بکاپ‌ها:      $INSTALL_DIR/backups/"
+echo "Import:       $INSTALL_DIR/IMPORT/"
 echo ""

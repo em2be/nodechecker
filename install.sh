@@ -66,47 +66,43 @@ if ! [[ "$NUM" =~ ^[0-9]+$ ]] || [ "$NUM" -lt 1 ]; then
 fi
 
 echo ""
-echo "برای هر inbound، JSON کاملش رو از پنل کپی کن و اینجا پیست کن."
-echo "بعد از پیست، Ctrl+D بزن."
+echo "حالا برای هر inbound اطلاعات لازم رو وارد کن."
 echo ""
 
 WATCHED_JSON="[]"
 
 for ((i=1; i<=NUM; i++)); do
     echo "---------- Inbound #$i از $NUM ----------"
-    echo "JSON کامل inbound رو پیست کن (بعدش Ctrl+D):"
+
+    ID=$(ask "  ID اینباند (عدد)" "")
+    PORT=$(ask "  Port" "8443")
+    REMARK=$(ask "  Remark / نام" "Watched_Inbound_$ID")
+    PROTOCOL=$(ask "  Protocol" "vless")
+    TAG=$(ask "  Tag" "in-${ID}-watched")
+
     echo ""
+    echo "  ایمیل کلاینت‌هایی که متعلق به این inbound هستن رو وارد کن"
+    echo "  (با کاما جدا کن، مثال: USAob8443,Nob8443)"
+    EMAILS_RAW=$(ask "  Client emails" "")
 
-    RAW_JSON=$(cat)
-
-    if ! echo "$RAW_JSON" | jq empty 2>/dev/null; then
-        echo "❌ JSON نامعتبر است."
-        exit 1
-    fi
-
-    ID=$(echo "$RAW_JSON" | jq -r '.id // empty')
-    PORT=$(echo "$RAW_JSON" | jq -r '.port // 8443')
-    REMARK=$(echo "$RAW_JSON" | jq -r '.remark // "Watched_Inbound"')
-    PROTOCOL=$(echo "$RAW_JSON" | jq -r '.protocol // "vless"')
-    TAG=$(echo "$RAW_JSON" | jq -r '.tag // ("in-" + (.id|tostring) + "-watched")')
-    LISTEN=$(echo "$RAW_JSON" | jq -r '.listen // ""')
-
-    STREAM=$(echo "$RAW_JSON" | jq -c '.streamSettings // .stream_settings // {"network":"tcp","security":"none"}')
-    SNIFF=$(echo "$RAW_JSON" | jq -c '.sniffing // {"enabled":false}')
-
-    # full clients array (for restore even if deleted from DB)
-    CLIENTS_JSON=$(echo "$RAW_JSON" | jq -c '.settings.clients // []')
-    EMAILS_JSON=$(echo "$RAW_JSON" | jq -c '[.settings.clients[]?.email // empty] | map(select(. != null and . != ""))')
-
-    if [ -z "$ID" ] || [ "$ID" = "null" ]; then
-        echo "❌ فیلد id در JSON پیدا نشد"
-        exit 1
+    EMAILS_JSON="[]"
+    if [ -n "$EMAILS_RAW" ]; then
+        EMAILS_JSON=$(echo "$EMAILS_RAW" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | jq -R . | jq -s .)
     fi
 
     echo ""
-    echo "  ✔ ID=$ID  Port=$PORT  Remark=$REMARK"
-    echo "  ✔ Clients: $(echo "$EMAILS_JSON" | jq -r 'join(", ")')"
-    echo ""
+    echo "  آیا می‌خوای stream_settings و sniffing پیش‌فرض باشه؟ (y/n)"
+    USE_DEFAULT=$(ask "  پیش‌فرض؟" "y")
+
+    if [[ "$USE_DEFAULT" =~ ^[Yy]$ ]]; then
+        STREAM='{"network":"tcp","security":"none","tcpSettings":{"header":{"type":"none"},"acceptProxyProtocol":false}}'
+        SNIFF='{"enabled":false,"destOverride":["http","tls","quic"]}'
+    else
+        echo "  stream_settings رو به صورت یک خط JSON وارد کن:"
+        read -r STREAM
+        echo "  sniffing رو به صورت یک خط JSON وارد کن:"
+        read -r SNIFF
+    fi
 
     ITEM=$(jq -n \
         --argjson id "$ID" \
@@ -114,9 +110,7 @@ for ((i=1; i<=NUM; i++)); do
         --arg remark "$REMARK" \
         --arg protocol "$PROTOCOL" \
         --arg tag "$TAG" \
-        --arg listen "$LISTEN" \
         --argjson emails "$EMAILS_JSON" \
-        --argjson clients "$CLIENTS_JSON" \
         --argjson stream "$STREAM" \
         --argjson sniff "$SNIFF" \
         '{
@@ -124,10 +118,9 @@ for ((i=1; i<=NUM; i++)); do
             port: $port,
             remark: $remark,
             protocol: $protocol,
-            listen: $listen,
+            listen: "",
             tag: $tag,
             client_emails: $emails,
-            clients: $clients,
             stream_settings: $stream,
             sniffing: $sniff
         }')
@@ -137,8 +130,7 @@ for ((i=1; i<=NUM; i++)); do
     echo ""
 done
 
-# DB path is fixed for Sanayi
-DB_PATH="/etc/x-ui/x-ui.db"
+DB_PATH=$(ask "مسیر دیتابیس" "/etc/x-ui/x-ui.db")
 INTERVAL=$(ask "فاصله چک (ثانیه)" "15")
 
 jq -n \
@@ -188,6 +180,5 @@ echo "  نصب تموم شد!"
 echo "=============================================="
 echo ""
 echo "منوی مدیریت:  checker"
-echo ""
-systemctl status node-watcher --no-pager -l || true
+echo "لاگ زنده:     journalctl -u node-watcher -f"
 echo ""

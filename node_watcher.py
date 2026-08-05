@@ -360,7 +360,7 @@ def auto_heal_and_sync():
                 do_sync(cur, item)
         conn.commit()
     except Exception as e:
-        log.error(f"Error: {e}", exp_info=True)
+        log.error(f"Error: {e}", exc_info=True)
     finally:
         if conn:
             try:
@@ -380,5 +380,5 @@ if __name__ == "__main__":
         try:
             auto_heal_and_sync()
         except Exception as e:
-            log.error(f"Unexpected: {e}", exc_info=True)
+            log.error(f"Unexpected: {e}", exp_info=True)
         time.sleep(CHECK_INTERVAL)

@@ -380,5 +380,5 @@ if __name__ == "__main__":
         try:
             auto_heal_and_sync()
         except Exception as e:
-            log.error(f"Unexpected: {e}", exp_info=True)
+            log.error(f"Unexpected: {e}", exc_info=True)
         time.sleep(CHECK_INTERVAL)

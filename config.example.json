@@ -9,22 +9,20 @@
       "remark": "OB8443",
       "protocol": "vless",
       "listen": "",
+      "tag": "in-14-watched",
+      "client_emails": ["OBuser_8443"],
       "stream_settings": {
-        "network": "ws",
-        "wsSettings": {
-          "acceptProxyProtocol": false,
-          "path": "/",
-          "host": "",
-          "headers": {},
-          "heartbeatPeriod": 0
-        },
-        "security": "none"
+        "network": "tcp",
+        "security": "none",
+        "tcpSettings": {
+          "header": {"type": "none"},
+          "acceptProxyProtocol": false
+        }
       },
       "sniffing": {
-        "enabled": false
-      },
-      "tag": "in-8443-tcp",
-      "client_emails": ["OBusr8443"]
+        "enabled": false,
+        "destOverride": ["http", "tls", "quic"]
+      }
     }
   ]
 }

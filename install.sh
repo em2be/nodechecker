@@ -2,7 +2,7 @@
 set -e
 
 echo "=============================================="
-echo "  Node Watcher Installer (Sanayi / 3X-UI)"
+echo "  Node Watcher Installer (MHSanaei / 3X-UI)"
 echo "=============================================="
 echo ""
 
@@ -180,7 +180,7 @@ echo ""
 
 cat > "$SERVICE_FILE" << EOF
 [Unit]
-Description=Node Watcher - Auto heal & sync for 3X-UI / Sanayi panel
+Description=Node Watcher - Auto heal & sync for 3X-UI / MHSanaei panel
 After=network.target x-ui.service
 Wants=x-ui.service
 

@@ -23,7 +23,7 @@
 ## نصب
 
 ```bash
-git clone https://github.com/em2be/nodechecker.git
+git clone https://github.com/Gravithm/nodechecker.git
 cd nodechecker
 chmod +x install.sh checker.sh
 sudo ./install.sh

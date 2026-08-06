@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-node_watcher.py – Auto-heal for Sanayi / 3X-UI
+node_watcher.py – Auto-heal for MHSanaei / 3X-UI
 Keeps: inbound, clients, client_traffics, client_inbounds, settings.clients JSON
 Only writes when something is missing (no infinite loop).
 """

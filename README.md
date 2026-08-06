@@ -1,4 +1,4 @@
-# Node Watcher for Sanayi / 3X-UI
+# Node Watcher for MHSanaei / 3X-UI
 
 اسکریپت نظارت و بازیابی خودکار اینباندهای مشخص‌شده در پنل سنایی / 3X-UI.
 

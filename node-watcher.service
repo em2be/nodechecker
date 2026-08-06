@@ -1,5 +1,5 @@
 [Unit]
-Description=Node Watcher - Auto heal & sync for 3X-UI / Sanayi panel
+Description=Node Watcher - Auto heal & sync for 3X-UI / MHSanaei panel
 After=network.target x-ui.service
 Wants=x-ui.service
 
